@@ -242,7 +242,6 @@ namespace SxGeoReader
 			//если не установлен режим чтения из файла
 			if (DatabaseMode != SxGeoMode.FileMode)
 			{
-				db_b = new byte[Header.DiapCount * Header.block_len];
 				db_b = ReadBytes(SxStream, (int)(Header.DiapCount * Header.block_len));
 			}
 
@@ -252,14 +251,12 @@ namespace SxGeoReader
 				//регионы
 				if (Header.RegionSize > 0)
 				{
-					regions_db = new byte[Header.RegionSize];
 					regions_db = ReadBytes(SxStream, (int)Header.RegionSize);
 				}
 
 				//города (справочник стран совмещен со справочником городов)
 				if (Header.CitySize > 0)
 				{
-					cities_db = new byte[Header.CitySize];
 					cities_db = ReadBytes(SxStream, (int)Header.CitySize);
 				}
 
@@ -404,7 +401,7 @@ namespace SxGeoReader
 		//читает данные из справочников
 		private byte[] ReadDBDirs(long start, uint seek, uint max, byte[] db)
 		{
-			byte[] buf = new byte[max];
+			byte[] buf;
 			if (DatabaseMode == SxGeoMode.MemoryAllMode) //вся БД в памяти
 			{
 				//в db - массив байт с нужной базой
@@ -412,6 +409,7 @@ namespace SxGeoReader
 			}
 			else //справочники на диске
 			{
+				buf = new byte[max];
 				SxStream.Seek(start + seek, SeekOrigin.Begin);
 				SxStream.Read(buf, 0, (int)max);
 			}
@@ -448,8 +446,7 @@ namespace SxGeoReader
 
 				// распаковываем запись
 				int RealLength = 0;
-				Dictionary<string, object> Record = Unpacker.Unpack(buf,
-					out RealLength);
+				Dictionary<string, object> Record = Unpacker.Unpack(buf, out RealLength);
 
 				// проверяем, не нашли ли запись
 				if ((byte)Record["id"] == CountryID)

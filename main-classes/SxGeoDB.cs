@@ -92,8 +92,6 @@ namespace SxGeoReader
 
 		//переменные, относящиеся к работе класса
 		private string FileName = ""; //путь к БД
-		private bool IsOpen = false; //открыт ли файл
-		public string ErrorMessage { get; private set; } //сообщение об ошибке
 		private FileStream SxStream = null; //поток для чтения БД
 		public bool RevBO { get; set; } //надо ли менять порядок байт
 		public long FileSize { get; private set; } //размер файла БД
@@ -130,154 +128,148 @@ namespace SxGeoReader
 			RemoveRU = false;
 		}
 
+		/// <summary>
+		/// открыт ли файл
+		/// </summary>
+		private bool IsOpen
+		{
+			get { return SxStream != null; }
+		}
+
 		//закрытие базы данных
 		public void CloseDB()
 		{
-			if (SxStream != null) SxStream.Close();
-			IsOpen = false;
+			SxStream?.Close();
+			SxStream = null;
 		}
 
 		//Открывает базу данных, проверяет корректность заголовка,
 		//вытаскивает данные из заголовка, загружает индексы и диапазоны IP
-		public bool OpenDB()
+		public void OpenDB()
 		{
-			ErrorMessage = string.Empty;
+			if (SxStream != null)
+				throw new InvalidOperationException();
 
+			FileInfo fi = new FileInfo(FileName);
+			FileSize = fi.Length;
+			if (FileSize < 40)
+				throw new InvalidDataException("Bad SxGeo file");
+
+			FileStream sxStream = null;
 			try
 			{
-				FileInfo fi = new FileInfo(FileName);
-				FileSize = fi.Length;
-				if (FileSize < 40)
+				sxStream = File.Open(FileName, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+				//проверка сигнатуры ('SxG')
+				string sgn = BytesToString(ReadBytes(sxStream, 3));
+				if (sgn != "SxG")
+					throw new InvalidDataException("Bad signature");
+
+				//версия файла
+				Header.Version = GetVersion((byte)sxStream.ReadByte());
+
+				//чтение timestamp
+				uint tstamp = ReadUInt(sxStream, RevBO);
+				Header.Timestamp = UnixTimeToDateTime(tstamp);
+
+				//тип базы
+				Header.DBType = (SxGeoType)sxStream.ReadByte();
+
+				//кодировка 
+				Header.DBEncoding = (SxGeoEncoding)sxStream.ReadByte();
+
+				//чтение всего остального заголовка
+				Header.fbIndexLen = (byte)sxStream.ReadByte(); ////элементов в индексе первых байт (b_idx_len/byte)
+				Header.mIndexLen = ReadUShort(sxStream, RevBO); //элементов в основном индексе (m_idx_len/ushort)
+				Header.Range = ReadUShort(sxStream, RevBO); //Блоков в одном элементе индекса (range/ushort)
+				Header.DiapCount = ReadUInt(sxStream, RevBO); //Количество диапазонов (db_items)
+				Header.IdLen = (byte)sxStream.ReadByte(); //Размер ID-блока в байтах (1 для стран, 3 для городов) (id_len)
+				Header.MaxRegion = ReadUShort(sxStream, RevBO); //Максимальный размер записи региона - до 64 кб (max_region)
+				Header.MaxCity = ReadUShort(sxStream, RevBO); // Максимальный размер записи города - до 64 кб (max_city)
+				Header.RegionSize = ReadUInt(sxStream, RevBO); //Размер справочника регионов (region_size)
+				Header.CitySize = ReadUInt(sxStream, RevBO); //Размер справочника городов (city_size)
+				Header.MaxCountry = ReadUShort(sxStream, RevBO); //Максимальный размер записи страны - до 64 кб (max_country)
+				Header.CountrySize = ReadUInt(sxStream, RevBO); //Размер справочника стран (country_size)
+				Header.PackSize = ReadUShort(sxStream, RevBO); //Размер описания формата упаковки города/региона/страны (pack_size)*/
+
+				//проверка заголовка
+				if (unchecked(Header.fbIndexLen * Header.mIndexLen * Header.Range * Header.DiapCount * tstamp * Header.IdLen) == 0)
+					throw new InvalidDataException("Wrong file format");
+
+				//вытаскиваем описание формата упаковки
+				if (Header.PackSize != 0)
 				{
-					ErrorMessage = "Bad SxGeo file";
-					return false;
+					byte[] packformat = ReadBytes(sxStream, Header.PackSize);
+					Header.PackFormat = BytesToString(packformat);
+					//разбираем формат упаковки на составляющие структуры
+					string[] pack = Header.PackFormat.Split('\0');
+					if (pack.Length > 0) Header.pack_country = pack[0];
+					if (pack.Length > 1) Header.pack_region = pack[1];
+					if (pack.Length > 2) Header.pack_city = pack[2];
+				}
+				Header.block_len = 3 + (uint)Header.IdLen; //длина 1 блока диапазонов
+
+				//вытаскиваем индекс первых байт
+				fb_idx_arr = new uint[Header.fbIndexLen];
+				for (int i = 0; i < Header.fbIndexLen; i++)
+				{
+					fb_idx_arr[i] = ReadUInt(sxStream, RevBO);
+				}
+				//вытаскиваем основной индекс
+				m_idx_arr = new uint[Header.mIndexLen];
+				for (int i = 0; i < Header.mIndexLen; i++)
+				{
+					m_idx_arr[i] = ReadUInt(sxStream, RevBO);
 				}
 
-				SxStream = new FileStream(FileName, FileMode.Open, FileAccess.Read, FileShare.Read);
-			}
-			catch (Exception ex)
-			{
-				ErrorMessage = ex.Message;
-				CloseDB();
-				return false;
-			}
-
-			//проверка сигнатуры ('SxG')
-			string sgn = BytesToString(ReadBytes(SxStream, 3));
-			if (sgn != "SxG")
-			{
-				ErrorMessage = "Bad signature";
-				CloseDB();
-				return false;
-			}
-
-			//версия файла
-			Header.Version = GetVersion((byte)SxStream.ReadByte());
-
-			//чтение timestamp
-			uint tstamp = ReadUInt(SxStream, RevBO);
-			Header.Timestamp = UnixTimeToDateTime(tstamp);
-
-			//тип базы
-			Header.DBType = (SxGeoType)SxStream.ReadByte();
-
-			//кодировка 
-			Header.DBEncoding = (SxGeoEncoding)SxStream.ReadByte();
-
-			//чтение всего остального заголовка
-			Header.fbIndexLen = (byte)SxStream.ReadByte(); ////элементов в индексе первых байт (b_idx_len/byte)
-			Header.mIndexLen = ReadUShort(SxStream, RevBO); //элементов в основном индексе (m_idx_len/ushort)
-			Header.Range = ReadUShort(SxStream, RevBO); //Блоков в одном элементе индекса (range/ushort)
-			Header.DiapCount = ReadUInt(SxStream, RevBO); //Количество диапазонов (db_items)
-			Header.IdLen = (byte)SxStream.ReadByte(); //Размер ID-блока в байтах (1 для стран, 3 для городов) (id_len)
-			Header.MaxRegion = ReadUShort(SxStream, RevBO); //Максимальный размер записи региона - до 64 кб (max_region)
-			Header.MaxCity = ReadUShort(SxStream, RevBO); // Максимальный размер записи города - до 64 кб (max_city)
-			Header.RegionSize = ReadUInt(SxStream, RevBO); //Размер справочника регионов (region_size)
-			Header.CitySize = ReadUInt(SxStream, RevBO); //Размер справочника городов (city_size)
-			Header.MaxCountry = ReadUShort(SxStream, RevBO); //Максимальный размер записи страны - до 64 кб (max_country)
-			Header.CountrySize = ReadUInt(SxStream, RevBO); //Размер справочника стран (country_size)
-			Header.PackSize = ReadUShort(SxStream, RevBO); //Размер описания формата упаковки города/региона/страны (pack_size)*/
-
-			//проверка заголовка
-			if (!string.IsNullOrEmpty(ErrorMessage))
-			{
-				CloseDB();
-				return false;
-			}
-
-			if (Header.fbIndexLen * Header.mIndexLen * Header.Range * Header.DiapCount * tstamp * Header.IdLen == 0)
-			{
-				ErrorMessage = "Wrong file format";
-				CloseDB();
-				return false;
-			}
-
-			//вытаскиваем описание формата упаковки
-			if (Header.PackSize != 0)
-			{
-				byte[] packformat = ReadBytes(SxStream, Header.PackSize);
-				Header.PackFormat = BytesToString(packformat);
-				//разбираем формат упаковки на составляющие структуры
-				string[] pack = Header.PackFormat.Split('\0');
-				if (pack.Length > 0) Header.pack_country = pack[0];
-				if (pack.Length > 1) Header.pack_region = pack[1];
-				if (pack.Length > 2) Header.pack_city = pack[2];
-			}
-			Header.block_len = 3 + (uint)Header.IdLen; //длина 1 блока диапазонов
-
-			//вытаскиваем индекс первых байт
-			fb_idx_arr = new uint[Header.fbIndexLen];
-			for (int i = 0; i < Header.fbIndexLen; i++)
-			{
-				fb_idx_arr[i] = ReadUInt(SxStream, RevBO);
-			}
-			//вытаскиваем основной индекс
-			m_idx_arr = new uint[Header.mIndexLen];
-			for (int i = 0; i < Header.mIndexLen; i++)
-			{
-				m_idx_arr[i] = ReadUInt(SxStream, RevBO);
-			}
-
-			//читаем базу диапазонов IP, 
-			//если не установлен режим чтения из файла
-			if (DatabaseMode != SxGeoMode.FileMode)
-			{
-				db_b = ReadBytes(SxStream, (int)(Header.DiapCount * Header.block_len));
-			}
-
-			//загружаем справочники в память
-			if (DatabaseMode == SxGeoMode.MemoryAllMode)
-			{
-				//регионы
-				if (Header.RegionSize > 0)
+				//читаем базу диапазонов IP, 
+				//если не установлен режим чтения из файла
+				if (DatabaseMode != SxGeoMode.FileMode)
 				{
-					regions_db = ReadBytes(SxStream, (int)Header.RegionSize);
+					db_b = ReadBytes(sxStream, (int)(Header.DiapCount * Header.block_len));
 				}
 
-				//города (справочник стран совмещен со справочником городов)
-				if (Header.CitySize > 0)
+				//загружаем справочники в память
+				if (DatabaseMode == SxGeoMode.MemoryAllMode)
 				{
-					cities_db = ReadBytes(SxStream, (int)Header.CitySize);
+					//регионы
+					if (Header.RegionSize > 0)
+					{
+						regions_db = ReadBytes(sxStream, (int)Header.RegionSize);
+					}
+
+					//города (справочник стран совмещен со справочником городов)
+					if (Header.CitySize > 0)
+					{
+						cities_db = ReadBytes(sxStream, (int)Header.CitySize);
+					}
+
 				}
 
+				//Начало индекса первых байт
+				Header.fb_begin = 40 + (uint)Header.PackSize;
+				//начало основного индекса
+				Header.midx_begin = Header.fb_begin + (uint)Header.fbIndexLen * 4;
+				//начало диапазонов
+				Header.db_begin = Header.midx_begin + (uint)Header.mIndexLen * 4;
+				//начало справочника регионов
+				Header.regions_begin = Header.db_begin + Header.DiapCount *
+					Header.block_len;
+				//начало справочника стран
+				Header.countries_begin = Header.regions_begin + Header.RegionSize;
+				//начало справочника городов
+				Header.cites_begin = Header.countries_begin + Header.CountrySize;
 			}
-
-			//Начало индекса первых байт
-			Header.fb_begin = 40 + (uint)Header.PackSize;
-			//начало основного индекса
-			Header.midx_begin = Header.fb_begin + (uint)Header.fbIndexLen * 4;
-			//начало диапазонов
-			Header.db_begin = Header.midx_begin + (uint)Header.mIndexLen * 4;
-			//начало справочника регионов
-			Header.regions_begin = Header.db_begin + Header.DiapCount *
-				Header.block_len;
-			//начало справочника стран
-			Header.countries_begin = Header.regions_begin + Header.RegionSize;
-			//начало справочника городов
-			Header.cites_begin = Header.countries_begin + Header.CountrySize;
-
-			IsOpen = true;
-			return true;
+			catch
+			{
+				sxStream?.Close();
+				sxStream = null;
+				throw;
+			}
+			finally
+			{
+				SxStream = sxStream;
+			}
 		}
 
 		public SxGeoHeader GetHeader()
@@ -290,85 +282,79 @@ namespace SxGeoReader
 			return IPInfoTypes;
 		}
 
-		public Dictionary<string, object> GetIPInfo(string IP, SxGeoInfoType InfoType)
+		public Dictionary<string, object> GetIPInfo(string ip, SxGeoInfoType infoType)
 		{
-			Dictionary<string, object> data_city = new Dictionary<string, object>();
-			Dictionary<string, object> data_country = new Dictionary<string, object>();
-			Dictionary<string, object> data_region = new Dictionary<string, object>();
 			if (!IsOpen)
-			{
-				ErrorMessage = "Database not open.";
-				return null;
-			}
-			if (!IPConverter.IsIP(IP)) //проверяем IP ли это)
-			{
-				ErrorMessage = IP + " is not valid IP address.";
-				return null;
-			}
+				throw new InvalidOperationException("Database not open.");
+
+			if (ip is null)
+				throw new ArgumentNullException(nameof(ip));
+
+			if (!IPConverter.IsIP(ip)) // проверяем IPv4 ли это)
+				throw new ArgumentOutOfRangeException(ip + " is not valid IP address.");
 
 			//получаем ID IP-адреса
-			uint ID = SearchID(IP);
-			if (ID == 0) //не нашли
-			{
-				ErrorMessage = "Not found.";
-				return null;
-			}
+			uint id = SearchID(ip);
+			if (id == 0) // не нашли
+				throw new KeyNotFoundException("Not found.");
+
 			//создаем переменные для хранения ответа
 			IPInfo = new Dictionary<string, object>();
 			IPInfoTypes = new Dictionary<string, Type>();
 			//добавляем сам адрес
-			IPInfo.Add("ip", IP);
+			IPInfo.Add("ip", ip);
 			IPInfoTypes.Add("ip", typeof(string));
 
-			if (Header.IdLen == 1) //БД SxGeo, ничего кроме ISO-кода вывести не сможем
+			if (Header.IdLen == 1) // БД SxGeo, ничего кроме ISO-кода вывести не сможем
 			{
-				IPInfo.Add("country_iso", IdToIso(ID));
+				IPInfo.Add("country_iso", IdToIso(id));
 				IPInfoTypes.Add("country_iso", typeof(string));
 				return IPInfo;
 			}
 
-			//БД SxGeoCountry, можем вывести много чего
+			// БД SxGeoCountry, можем вывести много чего
 
-			SxGeoUnpack Unpacker = null;
-			byte[] buf = null;
+			byte[] buf;
+			SxGeoUnpack unpacker;
+			Dictionary<string, object> data_country;
 
-			//если найденный 'ID' < размера справочника городов
-			//город не найден - только страна
-			if (ID < Header.CountrySize)
+			// если найденный 'ID' < размера справочника городов
+			// город не найден - только страна
+			if (id < Header.CountrySize)
 			{
-				Unpacker = new SxGeoUnpack(Header.pack_country, Header.DBEncoding);
-				buf = ReadDBDirs(Header.countries_begin, ID, Header.MaxCountry, cities_db);
-				data_country = Unpacker.Unpack(buf);
-				AddData(data_country, Unpacker.GetRecordTypes(), "country_");
+				unpacker = new SxGeoUnpack(Header.pack_country, Header.DBEncoding);
+				buf = ReadDBDirs(Header.countries_begin, id, Header.MaxCountry, cities_db);
+				data_country = unpacker.Unpack(buf);
+				AddData(data_country, unpacker.GetRecordTypes(), "country_");
 				return IPInfo;
 			}
 
-			//город найден, находим и распаковываем информацию о городе
-			Unpacker = new SxGeoUnpack(Header.pack_city, Header.DBEncoding);
-			buf = ReadDBDirs(Header.countries_begin, ID, Header.MaxCity, cities_db);
-			data_city = Unpacker.Unpack(buf);
+			// город найден, находим и распаковываем информацию о городе
+			unpacker = new SxGeoUnpack(Header.pack_city, Header.DBEncoding);
+			buf = ReadDBDirs(Header.countries_begin, id, Header.MaxCity, cities_db);
+			Dictionary<string, object>  data_city = unpacker.Unpack(buf);
 
-			//о стране по ID страны
+			// о стране по ID страны
 			data_country = GetCountry((byte)data_city["country_id"]);
 
-			switch (InfoType)
+			switch (infoType)
 			{
-				case SxGeoInfoType.OnlyCountry: //только информация о стране
+				case SxGeoInfoType.OnlyCountry: // только информация о стране
 					AddData(data_country, SxGeoUnpack.GetRecordTypes(Header.pack_country), "country_");
 					break;
 
-				case SxGeoInfoType.CountryCity: //страна+город
+				case SxGeoInfoType.CountryCity: // страна+город
 					AddData(data_country, SxGeoUnpack.GetRecordTypes(Header.pack_country), "country_");
-					AddData(data_city, Unpacker.GetRecordTypes(), "city_");
+					AddData(data_city, unpacker.GetRecordTypes(), "city_");
 					break;
 
-				default: //полная информация с регионом (если есть)
-					Unpacker = new SxGeoUnpack(Header.pack_region, Header.DBEncoding);
+				default: // полная информация с регионом (если есть)
+					unpacker = new SxGeoUnpack(Header.pack_region, Header.DBEncoding);
 					buf = ReadDBDirs(Header.regions_begin, (uint)data_city["region_seek"], Header.MaxRegion, regions_db);
-					data_region = Unpacker.Unpack(buf);
+					Dictionary<string, object> data_region = unpacker.Unpack(buf);
 					AddData(data_country, SxGeoUnpack.GetRecordTypes(Header.pack_country), "country_");
 					AddData(data_city, SxGeoUnpack.GetRecordTypes(Header.pack_city), "city_");
-					AddData(data_region, Unpacker.GetRecordTypes(), "region_");
+					AddData(data_region, unpacker.GetRecordTypes(), "region_");
 					break;
 			}
 
@@ -377,7 +363,7 @@ namespace SxGeoReader
 
 		private void AddData(Dictionary<string, object> data, Dictionary<string, Type> dataTypes, string prefix)
 		{
-			//удаляем лишние поля из ответа
+			// удаляем лишние поля из ответа
 			foreach (string remove in ignore_fields)
 			{
 				data.Remove(remove);
@@ -390,7 +376,7 @@ namespace SxGeoReader
 				}
 			}
 
-			//добавляем данные в выходной словарь
+			// добавляем данные в выходной словарь
 			foreach (string key in data.Keys)
 			{
 				IPInfo.Add(prefix + key, data[key]);
@@ -398,7 +384,7 @@ namespace SxGeoReader
 			}
 		}
 
-		//читает данные из справочников
+		// читает данные из справочников
 		private byte[] ReadDBDirs(long start, uint seek, uint max, byte[] db)
 		{
 			byte[] buf;
@@ -464,9 +450,9 @@ namespace SxGeoReader
 		// Поиск информации о стране по ID на диске        
 		private Dictionary<string, object> GetCountryDisk(byte CountryID)
 		{
-			//становимся на начало таблицы со странами
-			long TableStart = Header.countries_begin;
-			Seek(TableStart, SeekOrigin.Begin);
+			// становимся на начало таблицы со странами
+			long tableStart = Header.countries_begin;
+			Seek(tableStart, SeekOrigin.Begin);
 
 			long Readed = 0;
 			int NextRead = (int)Header.CountrySize;
@@ -482,7 +468,7 @@ namespace SxGeoReader
 				}
 
 				//распаковываем запись
-				int RealLength = 0;
+				int RealLength;
 				Dictionary<string, object> Record = Unpacker.Unpack(buf, out RealLength);
 
 				//проверяем, не нашли ли запись
@@ -494,13 +480,13 @@ namespace SxGeoReader
 				//Сохраняем количество фактических байт записи
 				Readed += RealLength;
 				//Отступаем в потоке назад
-				long backstep = 0;
-				if (TableStart + Readed + Header.MaxCountry > FileSize)
+				long backstep;
+				if (tableStart + Readed + Header.MaxCountry > FileSize)
 				{
-					//если на чтение последних записей файла не хватило
-					//максимальной длины записи                    
+					// если на чтение последних записей файла не хватило
+					// максимальной длины записи
 					backstep = -NextRead + RealLength;
-					NextRead = (int)(FileSize - TableStart - Readed);
+					NextRead = (int)(FileSize - tableStart - Readed);
 					//break;
 				}
 				else
@@ -687,82 +673,36 @@ namespace SxGeoReader
 
 		private byte[] LoadDBPart(uint min, uint len)
 		{
-			//перемещаемся на начало диапазонов + 
-			//найденное минимальное значение
-
-			try
-			{
-				SxStream.Seek(Header.db_begin + min * Header.block_len,
-					SeekOrigin.Begin);
-			}
-			catch (Exception ex)
-			{
-				ErrorMessage = ex.Message;
-				return null;
-			}
-
+			// перемещаемся на начало диапазонов + 
+			// найденное минимальное значение
+			SxStream.Seek(Header.db_begin + min * Header.block_len, SeekOrigin.Begin);
 			return ReadBytes(SxStream, (int)(len * Header.block_len));
 		}
 		#endregion
 
 		#region file_read_func
-		//ползалка по файлу БД
-		public bool Seek(long Offset, SeekOrigin Origin)
+		// ползалка по файлу БД
+		public void Seek(long Offset, SeekOrigin Origin)
 		{
 			if (!IsOpen)
-			{
-				if (string.IsNullOrEmpty(ErrorMessage))
-				{
-					ErrorMessage = "Database not open";
-				}
-				return false;
-			}
+				throw new InvalidOperationException("Database not open");
 
-			try
-			{
-				SxStream.Seek(Offset, Origin);
-			}
-			catch (Exception ex)
-			{
-				ErrorMessage = ex.Message;
-				return false;
-			}
-			return true;
+			SxStream.Seek(Offset, Origin);
 		}
 
 		public byte[] ReadBytes(int Count)
 		{
 			if (!IsOpen)
-			{
-				if (string.IsNullOrEmpty(ErrorMessage))
-				{
-					ErrorMessage = "Database not open";
-				}
-				return null;
-			}
-
+				throw new InvalidOperationException("Database not open");
 			return ReadBytes(SxStream, Count);
 		}
 
 		private byte[] ReadBytes(FileStream FST, int Count)
 		{
 			byte[] buf = new byte[Count];
-			int readedBytes = 0;
-			try
-			{
-				readedBytes = FST.Read(buf, 0, Count);
-			}
-			catch (Exception ex)
-			{
-				ErrorMessage = ex.Message;
-				return null;
-			}
+			int readedBytes = FST.Read(buf, 0, Count);
 			if (readedBytes != Count)
-			{
-				ErrorMessage = "Format error";
-				return null;
-			}
-
+				throw new FormatException();
 			return buf;
 		}
 		#endregion
@@ -794,8 +734,7 @@ namespace SxGeoReader
 
 		private DateTime UnixTimeToDateTime(ulong UnixTime)
 		{
-			DateTime origin = new DateTime(1970, 1, 1, 0, 0, 0);
-			return origin.AddSeconds(UnixTime);
+			return new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(UnixTime);
 		}
 
 		private string GetVersion(byte ver)

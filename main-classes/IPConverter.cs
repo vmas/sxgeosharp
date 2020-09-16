@@ -1,40 +1,30 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Net;
+using System.Net.Sockets;
 
 namespace SxGeoReader
 {
 	public static class IPConverter
 	{
-		public static bool IsIP(string IP)
+		public static bool IsIP(string ipString)
 		{
-			try
-			{
-				IPAddress addr = IPAddress.Parse(IP);
-			}
-			catch
-			{
-				return false;
-			}
-			return true;
+			return IPAddress.TryParse(ipString, out IPAddress ip) && ip.AddressFamily == AddressFamily.InterNetwork;
 		}
 
-		public static string ToStandForm(string IP)
+		public static string ToStandForm(string ipString)
 		{
-			if (!IsIP(IP))
+			if (IPAddress.TryParse(ipString, out IPAddress ip) ||
+				ip.AddressFamily == AddressFamily.InterNetwork)
 			{
-				return string.Empty;
+				return ip.ToString();
 			}
-			IPAddress addr = IPAddress.Parse(IP);
-			return addr.ToString();
+			return string.Empty;
 		}
 
 		public static int IPToInt32(string IP)
 		{
-			IPAddress addr = IPAddress.Parse(IP);
 			//получаем байты адреса, они всегда в big-endian
-			byte[] addrbytes = addr.GetAddressBytes();
+			byte[] addrbytes = IPAddress.Parse(IP).GetAddressBytes();
 			int n = BitConverter.ToInt32(addrbytes, 0); //IP в виде Int32 big-endian 
 			if (BitConverter.IsLittleEndian) //если в системе little-endian порядок
 			{
@@ -57,14 +47,12 @@ namespace SxGeoReader
 
 		public static byte[] GetBytesBE(string IP)
 		{
-			IPAddress addr = IPAddress.Parse(IP);
-			return addr.GetAddressBytes();
+			return IPAddress.Parse(IP).GetAddressBytes();
 		}
 
 		public static byte[] GetBytesLE(string IP)
 		{
-			IPAddress addr = IPAddress.Parse(IP);
-			byte[] addrbytes = addr.GetAddressBytes();
+			byte[] addrbytes = IPAddress.Parse(IP).GetAddressBytes();
 			Array.Reverse(addrbytes);
 			return addrbytes;
 		}

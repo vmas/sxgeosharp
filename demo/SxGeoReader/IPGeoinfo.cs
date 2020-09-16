@@ -57,7 +57,6 @@ namespace SxGeoReader
 		public Dictionary<string, object> GetIPInfo(string IP)
 		{
 			Dictionary<string, object> buf = new Dictionary<string, object>();
-			string NormalForm = string.Empty;
 			string InputIP = string.Empty;
 
 			if (!IPConverter.IsIP(IP))
@@ -68,42 +67,47 @@ namespace SxGeoReader
 			}
 			SxGeoDB db = new SxGeoDB(DatabasePath);
 			db.DatabaseMode = SxGeoMode.FileMode;
-			if (!db.OpenDB())
+			try
 			{
-				buf.Add("status", "ERROR: " + db.ErrorMessage);
+				db.OpenDB();
+			}
+			catch (Exception e)
+			{
+				buf.Add("status", "ERROR: " + e.Message);
 				return buf;
 			}
 
-			NormalForm = IPConverter.ToStandForm(IP);
-			if (NormalForm != IP)
+			string status = null;
+			try
 			{
-				InputIP = IP;
-				IP = NormalForm;
-			}
+				string NormalForm = IPConverter.ToStandForm(IP);
+				if (NormalForm != IP)
+				{
+					InputIP = IP;
+					IP = NormalForm;
+				}
 
-			string spec = CheckSpecDiaps(IP);
-			if (spec != string.Empty)
+				string spec = CheckSpecDiaps(IP);
+				if (spec != string.Empty)
+				{
+					status = "WARNING: " + spec;
+				}
+
+				buf = db.GetIPInfo(IP, SxGeoInfoType.FullInfo);
+				status = "OK";
+			}
+			catch (Exception e)
 			{
-				buf.Add("ip", IP);
-				if (InputIP != string.Empty) buf.Add("input_ip", InputIP);
-				buf.Add("status", "WARNING: " + spec);
-				return buf;
+				status = e.Message;
 			}
-
-			buf = db.GetIPInfo(IP, SxGeoInfoType.FullInfo);
-			if (buf == null)
+			finally
 			{
-				buf = new Dictionary<string, object>();
-				buf.Add("ip", IP);
-				if (InputIP != string.Empty) buf.Add("input_ip", InputIP);
-				buf.Add("status", db.ErrorMessage);
-				return buf;
+				db.CloseDB();
 			}
-
-			if (InputIP != string.Empty) buf.Add("input_ip", InputIP);
-			buf.Add("status", "OK");
-			db.CloseDB();
-
+			buf["ip"] = IP;
+			if (InputIP != string.Empty)
+				buf["input_ip"] = InputIP;
+			buf["status"] = status;
 			return buf;
 		}
 	}

@@ -7,15 +7,15 @@ namespace SxGeoReader
 {
 	public class SxGeoUnpack
 	{
-		private Dictionary<string, object> RecordData = null;
-		private Dictionary<string, Type> RecordTypes = null;
-		private Dictionary<string, string> SxTypeCodes = null;
+		private Dictionary<string, object> RecordData;
+		private Dictionary<string, Type> RecordTypes;
+		private Dictionary<string, string> SxTypeCodes;
 
-		private Encoding StringsEncoding = null;
+		private Encoding StringsEncoding;
 
 		public bool RevBO { get; set; }
 
-		public SxGeoUnpack(string Format, SxGeoEncoding DBEncoding)
+		public SxGeoUnpack(string Format, SxGeoEncoding dbEncoding)
 		{
 			RevBO = !BitConverter.IsLittleEndian;
 
@@ -23,7 +23,7 @@ namespace SxGeoReader
 			RecordTypes = new Dictionary<string, Type>();
 			SxTypeCodes = new Dictionary<string, string>();
 
-			//разбираем строку формата
+			// разбираем строку формата
 			string[] fields = Format.Split('/');
 			foreach (string field in fields)
 			{
@@ -32,18 +32,25 @@ namespace SxGeoReader
 				string SxTypeCode = buf[0];
 				string FieldName = buf[1];
 
-				//подгатавливаем Dictionary'и
+				// подготавливаем словари
 				RecordData.Add(FieldName, null);
 				SxTypeCodes.Add(FieldName, SxTypeCode);
 				RecordTypes.Add(FieldName, SxTypeToType(SxTypeCode));
 			}
 
-			switch (DBEncoding)
+			switch (dbEncoding)
 			{
-				case SxGeoEncoding.CP1251: StringsEncoding = Encoding.GetEncoding(1251); break;
-				case SxGeoEncoding.UTF8: StringsEncoding = Encoding.UTF8; break;
-				case SxGeoEncoding.Latin1: StringsEncoding = Encoding.GetEncoding(1252); break;
+				case SxGeoEncoding.CP1251:
+					StringsEncoding = Encoding.GetEncoding(1251);
+					return;
+				case SxGeoEncoding.UTF8:
+					StringsEncoding = Encoding.UTF8;
+					return;
+				case SxGeoEncoding.Latin1:
+					StringsEncoding = Encoding.GetEncoding(1252);
+					return;
 			}
+			throw new ArgumentOutOfRangeException(nameof(dbEncoding));
 		}
 
 
@@ -51,7 +58,7 @@ namespace SxGeoReader
 		{
 			if (string.IsNullOrEmpty(SxTypeCode)) return null;
 
-			//mediumint - такого типа в C# нет, приведем к int/uint
+			// mediumint - такого типа в C# нет, приведем к int/uint
 			switch (SxTypeCode[0])
 			{
 				case 't': return typeof(sbyte); //tinyint signed - 1 - > sbyte
@@ -76,8 +83,9 @@ namespace SxGeoReader
 		public Dictionary<string, object> Unpack(byte[] Record, out int RealLength)
 		{
 			int Counter = 0;
-			object buf = null;
-
+			object buf;
+			string signs;
+			int isigns;
 			//перебираем сгенерированный ранее словарь с данными
 			foreach (string SxRecordName in SxTypeCodes.Keys)
 			{
@@ -88,85 +96,70 @@ namespace SxGeoReader
 				switch (SxTypeCode[0])
 				{
 					case 't':
-						{
-							buf = GetTinuintSigned(Record, Counter);
-							Counter++;
-						}; break;
+						buf = GetTinuintSigned(Record, Counter);
+						Counter++;
+						break;
 					case 'T':
-						{
-							buf = GetTinuintUnsigned(Record, Counter);
-							Counter++;
-						}; break;
+						buf = GetTinuintUnsigned(Record, Counter);
+						Counter++;
+						break;
 					case 's':
-						{
-							buf = GetSmallintSigned(Record, Counter);
-							Counter += 2;
-						}; break;
+						buf = GetSmallintSigned(Record, Counter);
+						Counter += 2;
+						break;
 					case 'S':
-						{
-							buf = GetSmallintUnsigned(Record, Counter);
-							Counter += 2;
-						}; break;
+						buf = GetSmallintUnsigned(Record, Counter);
+						Counter += 2;
+						break;
 					case 'm':
-						{
-							buf = GetMediumintSigned(Record, Counter);
-							Counter += 3;
-						}; break;
+						buf = GetMediumintSigned(Record, Counter);
+						Counter += 3;
+						break;
 					case 'M':
-						{
-							buf = GetMediumintUnsigned(Record, Counter);
-							Counter += 3;
-						}; break;
+						buf = GetMediumintUnsigned(Record, Counter);
+						Counter += 3;
+						break;
 					case 'i':
-						{
-							buf = GetIntSigned(Record, Counter);
-							Counter += 4;
-						}; break;
+						buf = GetIntSigned(Record, Counter);
+						Counter += 4;
+						break;
 					case 'I':
-						{
-							buf = GetIntUnsigned(Record, Counter);
-							Counter += 4;
-						}; break;
+						buf = GetIntUnsigned(Record, Counter);
+						Counter += 4;
+						break;
 					case 'f':
-						{
-							buf = GetFloat(Record, Counter);
-							Counter += 4;
-						}; break;
+						buf = GetFloat(Record, Counter);
+						Counter += 4;
+						break;
 					case 'd':
-						{
-							buf = GetDouble(Record, Counter);
-							Counter += 8;
-						}; break;
+						buf = GetDouble(Record, Counter);
+						Counter += 8;
+						break;
 					case 'n':
-						{
-							string signs = SxTypeCode.Substring(1);
-							int isigns = Convert.ToInt32(signs);
-							buf = GetN16(Record, Counter, isigns);
-							Counter += 2;
-						}; break;
+						signs = SxTypeCode.Substring(1);
+						isigns = Convert.ToInt32(signs);
+						buf = GetN16(Record, Counter, isigns);
+						Counter += 2;
+						break;
 					case 'N':
-						{
-							string signs = SxTypeCode.Substring(1);
-							int isigns = Convert.ToInt32(signs);
-							buf = GetN32(Record, Counter, isigns);
-							Counter += 4;
-						}; break;
+						signs = SxTypeCode.Substring(1);
+						isigns = Convert.ToInt32(signs);
+						buf = GetN32(Record, Counter, isigns);
+						Counter += 4;
+						break;
 					case 'c':
-						{
-							int length = Convert.ToInt32(SxTypeCode.Substring(1));
-							buf = GetFixedString(Record, Counter, length);
-							Counter += length;
-						}; break;
+						int length = Convert.ToInt32(SxTypeCode.Substring(1));
+						buf = GetFixedString(Record, Counter, length);
+						Counter += length;
+						break;
 					case 'b':
-						{
-							string Result = "";
-							Counter = GetBlob(Record, Counter, out Result);
-							buf = Result;
-						}; break;
+						string result;
+						Counter = GetBlob(Record, Counter, out result);
+						buf = result;
+						break;
 					default:
-						{
-							buf = null;
-						}; break;
+						buf = null;
+						break;
 				}
 
 				//записываем полученный объект в соотв. место RecordData

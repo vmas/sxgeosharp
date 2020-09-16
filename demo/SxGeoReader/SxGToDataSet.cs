@@ -77,27 +77,18 @@ namespace SxGeoReader
 		public bool FillTable()
 		{
 			//становимся на начало таблицы
-			if (!Database.Seek(TableStart, SeekOrigin.Begin))
-			{
-				ErrorMessage = Database.ErrorMessage;
-				return false;
-			}
+			Database.Seek(TableStart, SeekOrigin.Begin);
 
 			long Readed = 0;
 			int NextRead = MaxRecordSize;
 
 			while (Readed < TableSize - 1)
 			{
-				//читаем запись
+				// читаем запись
 				byte[] buf = Database.ReadBytes(NextRead);
-				if (buf == null)
-				{
-					ErrorMessage = Database.ErrorMessage;
-					return false;
-				}
 
-				//распаковываем запись
-				int RealLength = 0;
+				// распаковываем запись
+				int RealLength;
 				Dictionary<string, object> Record = Unpacker.Unpack(buf,
 					out RealLength);
 
